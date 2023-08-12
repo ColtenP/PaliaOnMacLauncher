@@ -14,11 +14,13 @@ public class Launcher
 {
     private readonly string _installationPath;
     private readonly string _patchManifestUrl;
+    private readonly string? _localZipFile;
 
-    public Launcher(string installationPath, string patchManifestUrl)
+    public Launcher(string installationPath, string patchManifestUrl, string? localZipFile)
     {
         _installationPath = installationPath;
         _patchManifestUrl = patchManifestUrl;
+        _localZipFile = localZipFile;
     }
 
     public void Start()
@@ -180,29 +182,18 @@ public class Launcher
         return BitConverter.ToString(checksum).Replace("-", String.Empty).ToLower();
     }
 
-    private void ProcessZipFile(LauncherConfig config, PaliaVersion paliaVersion, PaliaFile file)
+    private static void ExtractZip(string zipPath, string basePath)
     {
-        // If the installed version is larger than the palia version with this zip, skip processing this file.
-        // Zip files do not have hashes, so it's not possible to check, and it should have been installed already.
-        if (config.GameVersion.CompareTo(paliaVersion.GameVersion) >= 0) return;
-
-        Console.WriteLine("Downloading {0}", file.URL);
-        var tmpPath = DownloadFile(file.URL);
-
-        tmpPath.Wait();
-        
-        Console.WriteLine("Downloaded {0} to {1}, Extracting to {2}", file.URL, tmpPath.Result, _installationPath);
-        
         try
         {
-            using var zipArchive = new ZipFile(tmpPath.Result);
+            using var zipArchive = new ZipFile(zipPath);
             using var progressBar = new ProgressBar(Convert.ToInt32(zipArchive.Count),
-                $"Unzipping {Path.GetFileName(tmpPath.Result)}");
+                $"Unzipping {Path.GetFileName(zipPath)}");
             foreach (ZipEntry entry in zipArchive)
             {
                 try
                 {
-                    var destinationPath = Path.Combine(_installationPath, entry.Name);
+                    var destinationPath = Path.Combine(basePath, entry.Name);
                     var directoryPath = Path.GetDirectoryName(destinationPath);
                     progressBar.Tick();
                     if (directoryPath is null) continue;
@@ -215,18 +206,43 @@ public class Launcher
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine("Corrupted File {0}", entry.Name);
-                    Console.WriteLine(e);
+                    Console.Error.WriteLine("Corrupted File {0}", entry.Name);
+                    Console.Error.WriteLine(e);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error while opening Zip File: {0}", ex);
+            Console.Error.WriteLine("Error while opening Zip File: {0}", ex);
         }
+    }
+
+    private void ProcessZipFile(LauncherConfig config, PaliaVersion paliaVersion, PaliaFile file)
+    {
+        // If the installed version is larger than the palia version with this zip, skip processing this file.
+        // Zip files do not have hashes, so it's not possible to check, and it should have been installed already.
+        if (config.GameVersion.CompareTo(paliaVersion.GameVersion) >= 0) return;
         
-        Console.WriteLine("Cleaning Up {0}", tmpPath.Result);
-        File.Delete(tmpPath.Result);
+        
+        if (_localZipFile is not null)
+        {
+            Console.WriteLine("Using specified local zip file at {0}", _localZipFile);
+            Console.WriteLine("Extracting to {0}", _installationPath);
+            ExtractZip(_localZipFile, _installationPath);
+        }
+        else
+        {
+            Console.WriteLine("Downloading {0}", file.URL);
+            var tmpPath = DownloadFile(file.URL);
+            
+            tmpPath.Wait();
+            
+            Console.WriteLine("Downloaded {0} to {1}, Extracting to {2}", file.URL, tmpPath.Result, _installationPath);
+            ExtractZip(tmpPath.Result, _installationPath);
+            
+            Console.WriteLine("Cleaning Up {0}", tmpPath.Result);
+            File.Delete(tmpPath.Result);
+        }
     }
 
     private void ProcessExeFile(LauncherConfig config, PaliaVersion paliaVersion, PaliaFile file)
@@ -250,6 +266,8 @@ public class Launcher
         {
             Console.WriteLine("The hash provided was {0}, the hash calculated is {1}", file.Hash, sha256Hash);
             Console.WriteLine("The hash for file {0} does not match what is provided in the PatchManifest.json.", destinationPath);
+            Console.WriteLine("Press Any Key To Exit.");
+            Console.ReadLine();
             Environment.Exit(-1);
         }
         
@@ -275,8 +293,10 @@ public class Launcher
 
         if (!sha256Hash.Equals(file.Hash))
         {
-            Console.WriteLine("The hash provided was {0}, the hash calculated is {1}", file.Hash, sha256Hash);
-            Console.WriteLine("The hash for file {0} does not match what is provided in the PatchManifest.json.", destinationPath);
+            Console.Error.WriteLine("The hash provided was {0}, the hash calculated is {1}", file.Hash, sha256Hash);
+            Console.Error.WriteLine("The hash for file {0} does not match what is provided in the PatchManifest.json.", destinationPath);
+            Console.WriteLine("Press Any Key To Exit.");
+            Console.ReadLine();
             Environment.Exit(-1);
         }
         
