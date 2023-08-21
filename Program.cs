@@ -12,4 +12,4 @@ Console.WriteLine("Patch Manifest Url: {0}", patchManifestUrl);
 if (localZipFile is not null) Console.WriteLine("Local Zip File: {0}", localZipFile);
 
 var launcher = new Launcher(installationPath, patchManifestUrl, localZipFile);
-launcher.Start();
+await launcher.Start();
