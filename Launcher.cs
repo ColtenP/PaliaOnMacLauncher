@@ -24,22 +24,31 @@ public class Launcher
         try
         {
             Console.WriteLine("Starting PaliaOnMacLauncher");
-            var launcherFiles = await GetLauncherFiles();
-
-            if (launcherFiles is null) throw new Exception("Could not fetch PatchManifest");
-            if (!Directory.Exists(_installationPath)) Directory.CreateDirectory(_installationPath);
-
             LauncherUtils.RewriteLine("Initializing Launcher");
-            var progress = new Progress<LauncherProgress>();
-
+            
             var isDone = false;
-            void OnProgressChanged(object? _, LauncherProgress p)
-            {
+            var progress = new Progress<LauncherProgress>(p => {
                 if (isDone || p.IsComplete) return;
                 LauncherUtils.RewriteLine(p.FormattedMessage);
+            });
+            
+            if (!LauncherUtils.IsRedistributableInstalled())
+            {
+                Console.WriteLine("Microsoft Visual C++ Redistributable 2022 is not installed. Downloading Installer.");
+                var vcRedistFile = new PatchManifest.LauncherFile(
+                    "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+                    Path.Combine(_installationPath, "vc_redist.x64.exe")
+                );
+                await LauncherUtils.DownloadFile(vcRedistFile, progress);
+                var process = Process.Start(vcRedistFile.LocalPath);
+                await process.WaitForExitAsync();
+                Process.Start(Environment.ProcessPath!);
+                Process.GetCurrentProcess().Kill();
             }
-
-            progress.ProgressChanged += OnProgressChanged;
+            
+            var launcherFiles = await GetLauncherFiles();
+            if (launcherFiles is null) throw new Exception("Could not fetch PatchManifest");
+            if (!Directory.Exists(_installationPath)) Directory.CreateDirectory(_installationPath);
             
             foreach (var launcherFile in launcherFiles)
             {

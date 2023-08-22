@@ -8,7 +8,7 @@ public class PatchManifest: Dictionary<string, PatchManifest.PaliaVersion>
     (
         from entry in this
         from file in entry.Value.Files
-        select new LauncherFile(entry.Key, file.Url, file.Hash, installationPath)
+        select new LauncherFile(file.Url, file.Hash, installationPath)
     ).ToList();
         
     
@@ -27,15 +27,19 @@ public class PatchManifest: Dictionary<string, PatchManifest.PaliaVersion>
 
     public class LauncherFile
     {
-        public string GameVersion { get; set; }
         public string Url { get; set; }
-        public string Hash { get; set; }
+        public string? Hash { get; }
         public string LocalPath { get; set; }
         public string FileName => Path.GetFileName(LocalPath);
 
-        public LauncherFile(string gameVersion, string url, string hash, string installationPath)
+        public LauncherFile(string url, string localPath)
         {
-            GameVersion = gameVersion;
+            Url = url;
+            LocalPath = localPath;
+        }
+        
+        public LauncherFile(string url, string hash, string installationPath)
+        {
             Url = url;
             Hash = hash;
             LocalPath = url.Split(".").Last() switch

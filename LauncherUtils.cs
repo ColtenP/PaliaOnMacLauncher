@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using ICSharpCode.SharpZipLib.Core;
 using ICSharpCode.SharpZipLib.Zip;
+using Microsoft.Win32;
 
 namespace PaliaOnMacLauncher;
 
@@ -8,6 +10,17 @@ public static class LauncherUtils
     public static void RewriteLine(string? value, params object[] param)
     {
         Console.Write("\r" + new string(' ', Console.BufferWidth) + "\r" + value, param);
+    }
+
+    public static bool IsRedistributableInstalled()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return true;
+
+        using var registryKey = Registry.LocalMachine
+            .OpenSubKey(@"Software\Wow6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\X64");
+        var value = int.TryParse(registryKey?.GetValue("Bld")?.ToString(), out var bld);
+        
+        return value && bld >= 32532;
     }
     
     public static async Task DownloadFile(PatchManifest.LauncherFile file, IProgress<LauncherProgress>? progress)
