@@ -1,14 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using ICSharpCode.SharpZipLib.Core;
-using ICSharpCode.SharpZipLib.Zip;
-using ShellProgressBar;
 
 namespace PaliaOnMacLauncher;
 
 using System.Text.Json;
-using System.Linq;
 
 public class Launcher
 {
@@ -25,32 +21,51 @@ public class Launcher
 
     public async Task Start()
     {
-        Console.WriteLine("Starting PaliaOnMacLauncher");
-        var launcherFiles = await GetLauncherFiles();
-
-        if (launcherFiles is null)
+        try
         {
-            await Console.Error.WriteLineAsync("Could not fetch PatchManifest");
+            Console.WriteLine("Starting PaliaOnMacLauncher");
+            var launcherFiles = await GetLauncherFiles();
+
+            if (launcherFiles is null) throw new Exception("Could not fetch PatchManifest");
+            if (!Directory.Exists(_installationPath)) Directory.CreateDirectory(_installationPath);
+
+            LauncherUtils.RewriteLine("Initializing Launcher");
+            var progress = new Progress<LauncherProgress>();
+
+            var isDone = false;
+            void OnProgressChanged(object? _, LauncherProgress p)
+            {
+                if (isDone || p.IsComplete) return;
+                LauncherUtils.RewriteLine(p.FormattedMessage);
+            }
+
+            progress.ProgressChanged += OnProgressChanged;
+            
+            foreach (var launcherFile in launcherFiles)
+            {
+                LauncherUtils.RewriteLine($"Processing {launcherFile.FileName}");
+                await ProcessLauncherFile(launcherFile, progress);
+                LauncherUtils.RewriteLine($"Processed {launcherFile.FileName}\n");
+            }
+
+            isDone = true;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Process.Start(Path.Combine(_installationPath, "Palia.exe"));
+                Process.GetCurrentProcess().Kill();
+            }
+            else
+            {
+                Console.WriteLine("To play the game, please run Windows, or run this launcher under Wine");
+            }
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine(e);
             Console.ReadLine();
-            Environment.Exit(-1);
         }
-
-        if (!Directory.Exists(_installationPath)) Directory.CreateDirectory(_installationPath);
-
-        foreach (var launcherFile in launcherFiles)
-        {
-            await ProcessLauncherFile(launcherFile);
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            Process.Start(Path.Combine(_installationPath, "Palia.exe"));
-            Process.GetCurrentProcess().Kill();
-        }
-        else
-        {
-            Console.WriteLine("To play the game, please run Windows, or run this launcher under Wine");
-        }
+        
     }
 
     private bool DoesInstallationExist => File.Exists(Path.Combine(_installationPath, "Palia.exe"));
@@ -65,80 +80,58 @@ public class Launcher
         return files;
     }
     
-    private async Task ProcessLauncherFile(PatchManifest.LauncherFile file)
+    private async Task ProcessLauncherFile(PatchManifest.LauncherFile file, IProgress<LauncherProgress>? progress)
     {
-        if (file.LocalPath.EndsWith(".zip")) await ProcessZipFile(file);
-        else await ProcessPaliaFile(file);
+        if (file.LocalPath.EndsWith(".zip")) await ProcessZipFile(file, progress);
+        else await ProcessPaliaFile(file, progress);
     }
 
-    private async Task ProcessZipFile(PatchManifest.LauncherFile file)
+    private async Task ProcessZipFile(PatchManifest.LauncherFile file, IProgress<LauncherProgress>? progress)
     {
         if (DoesInstallationExist) return;
 
-        if (_localZipFile is not null) file.LocalPath = _localZipFile;
-        if (!Path.Exists(file.LocalPath))
+        if (_localZipFile is null)
         {
-            Console.WriteLine("Downloading {0}", file.FileName);
-            await DownloadFile(file.Url, file.LocalPath);
-            Console.WriteLine("Downloaded {0}", file.FileName);
+            await LauncherUtils.DownloadFile(file, progress);
+        }
+        else
+        {
+            file.LocalPath = _localZipFile;
         }
         
-        ExtractZip(file.LocalPath, _installationPath);
+        await LauncherUtils.ExtractZip(file.LocalPath, _installationPath, progress);
         
         if (_localZipFile is null) File.Delete(file.LocalPath);
     }
 
-    private async Task ProcessPaliaFile(PatchManifest.LauncherFile file)
+    private static async Task ProcessPaliaFile(PatchManifest.LauncherFile file, IProgress<LauncherProgress>? progress)
     {
-        if (!Path.Exists(file.LocalPath) || !CalculateFileHash(file.LocalPath).Equals(file.Hash))
+        if (!Path.Exists(file.LocalPath) || !CalculateFileHash(file, progress).Equals(file.Hash))
         {
-            Console.WriteLine("Downloading {0}", file.FileName);
-            await DownloadFile(file.Url, file.LocalPath);
-            Console.WriteLine("Downloaded {0}", file.FileName);
+            await LauncherUtils.DownloadFile(file, progress);
         }
 
-        if (!CalculateFileHash(file.LocalPath).Equals(file.Hash))
+        if (!CalculateFileHash(file, progress).Equals(file.Hash))
         {
-            Console.Error.WriteLine("File Hashes Do Not Match for {0}", file.FileName);
-            Console.ReadLine();
-            Environment.Exit(-1);
+            throw new Exception($"File hash does not match for {file.FileName}");
         }
     }
-    
-    private static async Task DownloadFile(string url, string destinationPath)
-    {
-        using var client = new HttpClient();
-        
-        var progress = new Progress<float>();
-        var fileName = Path.GetFileName(destinationPath);
-        var progressBarOptions = new ProgressBarOptions
-        {
-            CollapseWhenFinished = true,
-            ProgressBarOnBottom = false
-        };
-        var progressBar = new ProgressBar(10000, fileName, progressBarOptions);
-        
-        progress.ProgressChanged += DownloadProgressCallBack(progressBar);
-        
-        await using var fs = new FileStream(destinationPath, FileMode.Create);
-        await client.DownloadDataAsync(url, fs, progress);
-        progressBar.Dispose();
-    }
 
-    private static EventHandler<float> DownloadProgressCallBack(ProgressBar progressBar)
+    private static string CalculateFileHash(PatchManifest.LauncherFile file, IProgress<LauncherProgress>? progress)
     {
-        return (_, progress) =>
+        progress?.Report(new LauncherProgress
         {
-            progressBar.AsProgress<float>().Report(progress);
-        };
-    }
-
-    private static string CalculateFileHash(string path)
-    {
-        using var stream = File.OpenRead(path);
+            Message = $"Hashing {file.FileName}"
+        });
+        using var stream = File.OpenRead(file.LocalPath);
         using var sha256 = SHA256.Create();
         var checksum = sha256.ComputeHash(stream);
-        return BitConverter.ToString(checksum).Replace("-", String.Empty).ToLower();
+        var hash = BitConverter.ToString(checksum).Replace("-", string.Empty).ToLower();
+        progress?.Report(new LauncherProgress
+        {
+            Message = $"Hashed {file.FileName}"
+        });
+
+        return hash;
     }
-    
 }

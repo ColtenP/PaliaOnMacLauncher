@@ -3,27 +3,29 @@ namespace PaliaOnMacLauncher;
 public static class HttpClientProgressExtensions
 {
     public static async Task DownloadDataAsync(this HttpClient client, string requestUrl, Stream destination,
-        IProgress<float> progress = null, CancellationToken cancellationToken = default)
+        IProgress<LauncherProgress>? progress = null, CancellationToken cancellationToken = default)
     {
-        using var response = await client.GetAsync(requestUrl, HttpCompletionOption.ResponseHeadersRead);
+        using var response = await client.GetAsync(requestUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var contentLength = response.Content.Headers.ContentLength;
-        await using var download = await response.Content.ReadAsStreamAsync();
+        await using var download = await response.Content.ReadAsStreamAsync(cancellationToken);
 
         if (progress is null || !contentLength.HasValue)
         {
-            await download.CopyToAsync(destination);
+            await download.CopyToAsync(destination, cancellationToken);
             return;
         }
 
-        var progressWrapper = new Progress<long>(totalBytes =>
-            progress.Report(GetProgressPercentage(totalBytes, contentLength.Value)));
+        var progressWrapper = new Progress<long>(totalBytes => progress.Report(new LauncherProgress
+            {
+                CurrentProgress = totalBytes,
+                MaxProgress = contentLength.Value
+            })
+        );
         await download.CopyToAsync(destination, 81920, progressWrapper, cancellationToken);
-
-        float GetProgressPercentage(float totalBytes, float currentBytes) => totalBytes / currentBytes;
     }
     
-    static async Task CopyToAsync (this Stream source, Stream destination, int bufferSize,
-        IProgress<long> progress = null, CancellationToken cancellationToken = default)
+    public static async Task CopyToAsync (this Stream source, Stream destination, int bufferSize,
+        IProgress<long>? progress, CancellationToken cancellationToken = default)
     {
         if (bufferSize < 0)
             throw new ArgumentOutOfRangeException (nameof (bufferSize));
