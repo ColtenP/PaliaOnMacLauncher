@@ -24,6 +24,7 @@ public class Launcher
         try
         {
             Console.WriteLine("Starting PaliaOnMacLauncher");
+            if (!Directory.Exists(_installationPath)) Directory.CreateDirectory(_installationPath);
             LauncherUtils.RewriteLine("Initializing Launcher");
             
             var isDone = false;
@@ -48,7 +49,6 @@ public class Launcher
             
             var launcherFiles = await GetLauncherFiles();
             if (launcherFiles is null) throw new Exception("Could not fetch PatchManifest");
-            if (!Directory.Exists(_installationPath)) Directory.CreateDirectory(_installationPath);
             
             foreach (var launcherFile in launcherFiles)
             {
